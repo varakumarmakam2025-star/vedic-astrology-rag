@@ -101,6 +101,8 @@ if __name__ == "__main__":
 
     print("2. Chunking Text...")
     chunks = chunk_text(raw_text)
+    print("Words in notes:", len(raw_text.split()))
+    print("Number of chunks:", len(chunks))
 
     print("3. Indexing Chunks in Vector DB...")
     vector_store = setup_vector_db(chunks)
