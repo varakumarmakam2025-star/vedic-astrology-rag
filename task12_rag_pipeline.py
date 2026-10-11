@@ -56,12 +56,21 @@ def setup_vector_db(chunks):
         )
     return collection
 
+import time
+
+def generate_with_retry(client, tries=3, **kwargs):
+    for attempt in range(tries):
+        try:
+            return client.models.generate_content(**kwargs)
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            time.sleep(2 * (attempt + 1))
+    return None
+
+
 def query_rag_pipeline(query, collection, top_k=2):
     """Retrieves context and passes it to Gemini."""
-    results = collection.query(
-        query_texts=[query],
-        n_results=top_k
-    )
+    results = collection.query(query_texts=[query], n_results=top_k)
     retrieved_chunks = results['documents'][0]
     context = "\n\n".join(retrieved_chunks)
 
@@ -75,30 +84,32 @@ def query_rag_pipeline(query, collection, top_k=2):
     Answer:
     """
 
-    # Updated to gemini-3.8-flash
-    response = client_llm.models.generate_content(
+    response = generate_with_retry(
+        client_llm,
         model="gemini-3.8-flash",
         contents=prompt,
     )
-    
-    return response.text, retrieved_chunks
 
+    if response is None:
+        return "Sorry, the model did not respond. Please try again.", retrieved_chunks
+
+    return response.text, retrieved_chunks
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
     print("1. Loading Data...")
     raw_text, _ = load_data()
-    
+
     print("2. Chunking Text...")
     chunks = chunk_text(raw_text)
-    
+
     print("3. Indexing Chunks in Vector DB...")
     vector_store = setup_vector_db(chunks)
-    
+
     print("\n--- RAG System Ready ---")
-    
+
     user_query = "What are the characteristics of fire signs?"
     answer, context_used = query_rag_pipeline(user_query, vector_store)
-    
+
     print(f"\nUser Query: {user_query}\n")
     print("Retrieved Context:")
     for c in context_used:
