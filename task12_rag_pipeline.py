@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import pandas as pd
 import chromadb
@@ -50,7 +51,7 @@ def csv_rows_to_texts(csv_data):
 
 # --- STEP 2: CHUNKING ---
 def chunk_text(text, chunk_size=300, overlap=50):
-    """Splits text into overlapping chunks."""
+    """Old method: fixed-size word chunks with overlap (kept for comparison)."""
     words = text.split()
     if not words:
         return []
@@ -59,6 +60,29 @@ def chunk_text(text, chunk_size=300, overlap=50):
         chunk = " ".join(words[i:i + chunk_size])
         if chunk:
             chunks.append(chunk)
+    return chunks
+
+
+def chunk_by_paragraph(text, max_words=150):
+    """New method: one chunk per paragraph. Long paragraphs are cut by sentence."""
+    chunks = []
+    for paragraph in re.split(r"\n\s*\n", text):
+        paragraph = " ".join(paragraph.split())
+        if not paragraph:
+            continue
+        if len(paragraph.split()) <= max_words:
+            chunks.append(paragraph)
+        else:
+            current = ""
+            sentences = paragraph.replace(". ", ".|").replace("! ", "!|").replace("? ", "?|").split("|")
+            for sentence in sentences:
+                if current and len((current + " " + sentence).split()) > max_words:
+                    chunks.append(current.strip())
+                    current = sentence
+                else:
+                    current = (current + " " + sentence).strip()
+            if current:
+                chunks.append(current.strip())
     return chunks
 
 
@@ -121,9 +145,11 @@ def query_rag_pipeline(query, collection, top_k=3):
 if __name__ == "__main__":
     print("1. Loading Data...")
     raw_text, csv_data = load_data()
+    if "___" in raw_text:
+        print("WARNING: astro_notes.txt still contains ___ blanks. Replace them with your own text.")
 
     print("2. Chunking Text...")
-    chunks = chunk_text(raw_text)
+    chunks = chunk_by_paragraph(raw_text)
     csv_texts = csv_rows_to_texts(csv_data)
     print("Words in notes:", len(raw_text.split()), "| Note chunks:", len(chunks), "| CSV rows:", len(csv_texts))
 
@@ -132,7 +158,7 @@ if __name__ == "__main__":
 
     print("\n--- RAG System Ready ---")
 
-    user_query = "Which signs are fire signs?"
+    user_query = "What are fire signs like?"
     answer, context_used = query_rag_pipeline(user_query, vector_store)
 
     print(f"\nUser Query: {user_query}\n")
