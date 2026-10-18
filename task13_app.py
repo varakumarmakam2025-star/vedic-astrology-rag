@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import streamlit as st
 from dotenv import load_dotenv, find_dotenv
@@ -22,15 +23,29 @@ if not key:
 os.environ["GEMINI_API_KEY"] = key
 
 # Reuse the data and indexing code from task12 (one copy of the logic)
-from task12_rag_pipeline import load_data, csv_rows_to_texts, chunk_text, setup_vector_db
+from task12_rag_pipeline import load_data, csv_rows_to_texts, setup_vector_db
 
 client_llm = genai.Client(api_key=key)
+
+
+def chunk_by_sentence_with_label(text):
+    """One chunk per sentence, prefixed with its paragraph's subject."""
+    chunks = []
+    for paragraph in re.split(r"\n\s*\n", text):
+        paragraph = " ".join(paragraph.split())
+        if not paragraph:
+            continue
+        label = paragraph.split(" (")[0] if " (" in paragraph else paragraph.split(" ")[0]
+        for sentence in re.split(r"(?<=[.!?])\s+", paragraph):
+            if sentence.strip():
+                chunks.append(f"{label}: {sentence.strip()}")
+    return chunks
 
 
 @st.cache_resource(show_spinner="Building the knowledge base...")
 def init_rag_system():
     raw_text, csv_data = load_data()
-    chunks = chunk_text(raw_text)
+    chunks = chunk_by_sentence_with_label(raw_text)
     csv_texts = csv_rows_to_texts(csv_data)
     return setup_vector_db(chunks, csv_texts), len(chunks), len(csv_texts)
 
