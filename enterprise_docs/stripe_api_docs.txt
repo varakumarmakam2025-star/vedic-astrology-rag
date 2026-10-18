@@ -1,0 +1,7 @@
+Stripe API Overview: The Stripe API is organized around REST. Our API has predictable resource-oriented URLs, accepts form-encoded request bodies, returns JSON-encoded responses, and uses standard HTTP response codes, authentication, and verbs.
+
+Payment Intents API: Payment Intents guide you through the process of collecting a payment from your customer. We recommend that you create a PaymentIntent object as soon as your customer has initiated their checkout process. This allows you to track changes to the payment object as it's being processed.
+
+Stripe Webhooks: Webhooks allow your integration to listen to events that happen in your Stripe account. When an event occurs, Stripe sends an HTTP POST request to your webhook endpoint with details about the event, such as a payment succeeding or failing.
+
+Authentication and Security: You authenticate your API requests by providing your secret API key. Do not share your secret API keys in publicly accessible areas such as GitHub or client-side code. All API requests must be made over HTTPS.
