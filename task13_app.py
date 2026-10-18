@@ -1,57 +1,50 @@
+import os
 import time
 import streamlit as st
-import os
-import pandas as pd
-import chromadb
 from dotenv import load_dotenv, find_dotenv
 from google import genai
 from google.genai.errors import ServerError
 
-# Load environment variables
 load_dotenv(find_dotenv())
+st.set_page_config(page_title="Astro RAG Assistant")
 
-gemini_key = os.getenv("GEMINI_API_KEY")
-if not gemini_key:
-    st.error("GEMINI_API_KEY missing in .env file!")
+# API key: .env on your laptop, or Streamlit Secrets in the cloud
+key = os.getenv("GEMINI_API_KEY")
+if not key:
+    try:
+        key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        key = None
+if not key:
+    st.error("GEMINI_API_KEY is missing. Add it to your .env file (local) "
+             "or to the app's Secrets settings (Streamlit Cloud).")
     st.stop()
+os.environ["GEMINI_API_KEY"] = key
 
-client_llm = genai.Client(api_key=gemini_key)
+# Reuse the data and indexing code from task12 (one copy of the logic)
+from task12_rag_pipeline import load_data, csv_rows_to_texts, chunk_text, setup_vector_db
 
-@st.cache_resource
+client_llm = genai.Client(api_key=key)
+
+
+@st.cache_resource(show_spinner="Building the knowledge base...")
 def init_rag_system():
-    text_data = ""
-    if os.path.exists("astro_notes.txt"):
-        with open("astro_notes.txt", "r", encoding="utf-8") as f:
-            text_data = f.read()
+    raw_text, csv_data = load_data()
+    chunks = chunk_text(raw_text)
+    csv_texts = csv_rows_to_texts(csv_data)
+    return setup_vector_db(chunks, csv_texts), len(chunks), len(csv_texts)
 
-    words = text_data.split()
-    chunks = []
-    chunk_size, overlap = 300, 50
-    for i in range(0, len(words), chunk_size - overlap):
-        chunk = " ".join(words[i:i + chunk_size])
-        if chunk:
-            chunks.append(chunk)
 
-    client = chromadb.Client()
-    collection = client.get_or_create_collection(name="astro_knowledge_ui")
-    
-    for idx, chunk in enumerate(chunks):
-        collection.add(documents=[chunk], ids=[f"doc_{idx}"])
-        
-    return collection
+def retrieve(query, collection, top_k=3):
+    results = collection.query(query_texts=[query], n_results=top_k)
+    chunks = results["documents"][0]
+    sources = [m["source"] for m in results["metadatas"][0]]
+    return [f"[{s}] {c}" for s, c in zip(sources, chunks)]
 
-collection = init_rag_system()
-
-# UI Layout
-st.title("Astro RAG Assistant")
-st.write("Ask questions based on your astrology notes.")
-
-query = st.text_input("Enter your question:", placeholder="e.g., What are the traits of Leo?")
 
 def generate_with_retry(prompt):
-    """Tries primary model with retry, then falls back to gemini-2.5-flash."""
+    """Tries the primary model with retries, then falls back to gemini-2.5-flash."""
     models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash"]
-    
     for model_name in models_to_try:
         for attempt in range(3):
             try:
@@ -61,21 +54,38 @@ def generate_with_retry(prompt):
                 )
                 return response.text
             except ServerError:
-                time.sleep(2)  # Wait 2 seconds before retry
+                time.sleep(2)
             except Exception as e:
                 st.error(f"Error calling model {model_name}: {e}")
                 return None
     st.error("Google Gemini servers are currently overloaded. Please try again in a few moments.")
     return None
 
-if st.button("Search & Answer") and query:
+
+collection, n_chunks, n_rows = init_rag_system()
+
+# UI Layout
+st.title("Astro RAG Assistant")
+st.write("Ask questions based on the astrology notes in this project.")
+st.caption(f"Knowledge base: {n_chunks} note chunk(s) and {n_rows} sign rows.")
+
+examples = ["Which signs are fire signs?", "What is Aries like?", "What does Mars represent?"]
+cols = st.columns(len(examples))
+for col, example in zip(cols, examples):
+    if col.button(example):
+        st.session_state["question"] = example
+
+query = st.text_input("Enter your question:", key="question",
+                      placeholder="e.g., What are the traits of Leo?")
+
+if st.button("Search & Answer") and query.strip():
     with st.spinner("Retrieving context and generating answer..."):
-        results = collection.query(query_texts=[query], n_results=2)
-        retrieved_chunks = results['documents'][0]
-        context = "\n\n".join(retrieved_chunks)
+        retrieved = retrieve(query, collection)
+        context = "\n\n".join(retrieved)
 
         prompt = f"""
         Answer the question based ONLY on the provided context below.
+        If the context does not contain the answer, say so.
 
         Context:
         {context}
@@ -89,7 +99,6 @@ if st.button("Search & Answer") and query:
         if answer:
             st.subheader("Answer:")
             st.write(answer)
-
             with st.expander("View Retrieved Context Chunks"):
-                for chunk in retrieved_chunks:
+                for chunk in retrieved:
                     st.info(chunk)
