@@ -1,10 +1,13 @@
 import os
 import re
 import time
+import random
 import pandas as pd
 import chromadb
 from dotenv import load_dotenv, find_dotenv
 from google import genai
+from google.genai import types
+from google.genai.errors import ServerError
 
 load_dotenv(find_dotenv())
 
@@ -13,6 +16,14 @@ if not gemini_key:
     raise ValueError("GEMINI_API_KEY is missing! Check your .env file.")
 
 client_llm = genai.Client(api_key=gemini_key)
+
+# One place to change the model name.
+MODEL = "gemini-3.8-flash"
+
+# "low" thinking = faster answers; enough when answering from retrieved context.
+GEN_CONFIG = types.GenerateContentConfig(
+    thinking_config=types.ThinkingConfig(thinking_level="low"),
+)
 
 
 # --- STEP 1: LOAD DATA ---
@@ -107,12 +118,22 @@ def setup_vector_db(note_chunks, csv_texts):
 
 
 def generate_with_retry(client, tries=3, **kwargs):
+    """Retries only when Google's servers are overloaded.
+
+    Other errors (wrong model name, bad key) fail immediately instead of
+    sleeping and retrying for no reason.
+    """
+    kwargs.setdefault("config", GEN_CONFIG)
     for attempt in range(tries):
         try:
             return client.models.generate_content(**kwargs)
+        except ServerError as e:
+            print(f"Attempt {attempt + 1} failed (server overloaded): {e}")
+            if attempt < tries - 1:
+                time.sleep((2 ** attempt) + random.uniform(0, 1))
         except Exception as e:
-            print(f"Attempt {attempt + 1} failed: {e}")
-            time.sleep(2 * (attempt + 1))
+            print(f"Model call failed: {e}")
+            return None
     return None
 
 
@@ -135,7 +156,7 @@ def query_rag_pipeline(query, collection, top_k=3):
     Answer:
     """
 
-    response = generate_with_retry(client_llm, model="gemini-3.8-flash", contents=prompt)
+    response = generate_with_retry(client_llm, model=MODEL, contents=prompt)
     if response is None:
         return "Sorry, the model did not respond. Please try again.", labeled
     return response.text, labeled

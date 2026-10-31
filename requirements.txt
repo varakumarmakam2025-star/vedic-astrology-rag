@@ -2,5 +2,5 @@ streamlit
 chromadb
 sentence-transformers
 google-generativeai
-google-genai
+google-genai==2.33.0
 python-dotenv
