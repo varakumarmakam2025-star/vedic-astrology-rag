@@ -4,7 +4,7 @@ import time
 import streamlit as st
 from dotenv import load_dotenv, find_dotenv
 from google import genai
-from google.genai.errors import ServerError
+from google.genai import types
 
 load_dotenv(find_dotenv())
 st.set_page_config(page_title="Astro RAG Assistant")
@@ -22,10 +22,15 @@ if not key:
     st.stop()
 os.environ["GEMINI_API_KEY"] = key
 
-# Reuse the data and indexing code from task12 (one copy of the logic)
 from task12_rag_pipeline import load_data, csv_rows_to_texts, setup_vector_db
 
-client_llm = genai.Client(api_key=key)
+# Models measured as working on 2026-10-29, fastest first. The last one is
+# higher quality but was overloaded, so it is only a last resort.
+MODELS = ["gemini-3.1-flash-lite", "gemini-flash-lite-latest",
+          "gemini-3.5-flash-lite", "gemini-3.8-flash"]
+
+client_llm = genai.Client(api_key=key,
+                          http_options=types.HttpOptions(timeout=12000))
 
 
 def chunk_by_sentence_with_label(text):
@@ -57,24 +62,17 @@ def retrieve(query, collection, top_k=3):
     return [f"[{s}] {c}" for s, c in zip(sources, chunks)]
 
 
-def generate_with_retry(prompt):
-    """Tries the primary model with retries, then falls back to gemini-2.5-flash."""
-    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash"]
-    for model_name in models_to_try:
-        for attempt in range(3):
-            try:
-                response = client_llm.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                )
-                return response.text
-            except ServerError:
-                time.sleep(2)
-            except Exception as e:
-                st.error(f"Error calling model {model_name}: {e}")
-                return None
-    st.error("Google Gemini servers are currently overloaded. Please try again in a few moments.")
-    return None
+def generate_with_fallback(prompt):
+    """Tries each model once with a 12 s timeout, then moves on immediately."""
+    errors = []
+    for model_name in MODELS:
+        start = time.perf_counter()
+        try:
+            response = client_llm.models.generate_content(model=model_name, contents=prompt)
+            return response.text, model_name, time.perf_counter() - start, errors
+        except Exception as e:
+            errors.append(f"{model_name}: {str(e)[:60]}")
+    return None, None, 0.0, errors
 
 
 collection, n_chunks, n_rows = init_rag_system()
@@ -95,7 +93,9 @@ query = st.text_input("Enter your question:", key="question",
 
 if st.button("Search & Answer") and query.strip():
     with st.spinner("Retrieving context and generating answer..."):
+        t0 = time.perf_counter()
         retrieved = retrieve(query, collection)
+        retrieval_s = time.perf_counter() - t0
         context = "\n\n".join(retrieved)
 
         prompt = f"""
@@ -109,11 +109,17 @@ if st.button("Search & Answer") and query.strip():
         Answer:
         """
 
-        answer = generate_with_retry(prompt)
+        answer, model_used, gen_s, errors = generate_with_fallback(prompt)
 
-        if answer:
-            st.subheader("Answer:")
-            st.write(answer)
-            with st.expander("View Retrieved Context Chunks"):
-                for chunk in retrieved:
-                    st.info(chunk)
+    if answer:
+        st.subheader("Answer:")
+        st.write(answer)
+        st.caption(f"Retrieval {retrieval_s:.2f}s | {model_used} {gen_s:.1f}s")
+        with st.expander("View Retrieved Context Chunks"):
+            for chunk in retrieved:
+                st.info(chunk)
+    else:
+        st.error("All models are unavailable right now. Please try again in a minute.")
+        with st.expander("Details"):
+            for err in errors:
+                st.write(err)
