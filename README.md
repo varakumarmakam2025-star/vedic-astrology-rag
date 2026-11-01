@@ -55,4 +55,3 @@ Python 3.12, ChromaDB, Gemini API (google-genai 2.33.0), Streamlit, pandas, Stre
 ## How I built it
 I built this to learn RAG from scratch, using AI coding assistants for help. I wrote the notes,
 ran the experiments, and debugged the deployment.
-'@ | Set-Content -Path README.md -Encoding ascii
