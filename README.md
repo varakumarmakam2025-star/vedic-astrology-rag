@@ -1,4 +1,3 @@
-@'
 # Astro RAG Assistant
 
 A small retrieval-augmented generation (RAG) app that answers questions about Vedic astrology
