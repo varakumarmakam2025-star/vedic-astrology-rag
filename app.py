@@ -24,8 +24,9 @@ os.environ["GEMINI_API_KEY"] = key
 
 from task12_rag_pipeline import load_data, csv_rows_to_texts, setup_vector_db
 
-# Models measured as working on 2026-10-29, fastest first. The last one is
-# higher quality but was overloaded, so it is only a last resort.
+# Fastest models first, from my own speed test. Model availability and speed
+# change over time, so re-run the test now and then. The last one is higher
+# quality but was often overloaded, so it is only a last resort.
 MODELS = ["gemini-3.1-flash-lite", "gemini-flash-lite-latest",
           "gemini-3.5-flash-lite", "gemini-3.8-flash"]
 
@@ -71,7 +72,8 @@ def generate_with_fallback(prompt):
             response = client_llm.models.generate_content(model=model_name, contents=prompt)
             return response.text, model_name, time.perf_counter() - start, errors
         except Exception as e:
-            errors.append(f"{model_name}: {str(e)[:60]}")
+            waited = time.perf_counter() - start
+            errors.append(f"{model_name} ({waited:.1f}s): {str(e)[:60]}")
     return None, None, 0.0, errors
 
 
@@ -110,11 +112,18 @@ if st.button("Search & Answer") and query.strip():
         """
 
         answer, model_used, gen_s, errors = generate_with_fallback(prompt)
+        total_s = time.perf_counter() - t0
 
     if answer:
         st.subheader("Answer:")
         st.write(answer)
-        st.caption(f"Retrieval {retrieval_s:.2f}s | {model_used} {gen_s:.1f}s")
+        skipped = f" | skipped {len(errors)} model(s)" if errors else ""
+        st.caption(f"Total {total_s:.1f}s | Retrieval {retrieval_s:.2f}s | "
+                   f"{model_used} {gen_s:.1f}s{skipped}")
+        if errors:
+            with st.expander("Skipped models"):
+                for err in errors:
+                    st.write(err)
         with st.expander("View Retrieved Context Chunks"):
             for chunk in retrieved:
                 st.info(chunk)
